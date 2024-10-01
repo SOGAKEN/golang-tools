@@ -208,7 +208,6 @@ func processJSONFile(filePath string, profile Profile) ([][]string, error) {
 
 	return rows, nil
 }
-
 func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 	row := make([]string, len(profile.Columns))
 	parseContent := ""
@@ -218,17 +217,18 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ネストされた値の取得中にエラーが発生しました: %v", err)
 		}
-		log.Printf("Debug: ParseContent: %s", parseContent) // デバッグログ追加
+		log.Printf("Debug: ParseContent: %s", parseContent) // デバッグログ
+
 		if profile.ContentType == "html" {
 			parseContent = cleanContent(parseContent)
-			log.Printf("Debug: Cleaned ParseContent: %s", parseContent) // デバッグログ追加
+			log.Printf("Debug: Cleaned ParseContent: %s", parseContent) // デバッグログ
 		}
 	}
 
 	// HTML形式の列のキーワードを収集
 	htmlKeywords := []string{}
 	for _, column := range profile.Columns {
-		if column.Format == "html" && column.Regex != "" {
+		if column.Regex != "" {
 			htmlKeywords = append(htmlKeywords, column.Regex)
 		}
 	}
@@ -238,25 +238,20 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HTML値の抽出中にエラーが発生しました: %v", err)
 	}
-	log.Printf("Debug: Extracted HTML Values: %v", htmlValues) // デバッグログ追加
+	log.Printf("Debug: Extracted HTML Values: %v", htmlValues) // デバッグログ
 
 	for i, column := range profile.Columns {
 		var value string
-		var err error
-		if column.Format == "html" && column.Regex != "" {
+		if column.Regex != "" {
 			value = htmlValues[column.Regex]
-		} else if column.Regex != "" && profile.ParseBody != "" {
-			value, err = extractValue(parseContent, column.Regex, column.ExtractToEnd)
-			if err != nil {
-				return nil, fmt.Errorf("値の抽出中にエラーが発生しました: %v", err)
-			}
-		} else {
+		} else if column.Key != "" {
+			var err error
 			value, err = getNestedValue(item, strings.Split(column.Key, "."))
 			if err != nil {
 				return nil, fmt.Errorf("ネストされた値の取得中にエラーが発生しました: %v", err)
 			}
 		}
-		log.Printf("Debug: Column %s, Value: %s", column.Column, value) // デバッグログ追加
+		log.Printf("Debug: Column %s, Value: %s", column.Column, value) // デバッグログ
 		row[i] = handleNewlines(value)
 		row[i] = handleNullValue(row[i])
 	}
@@ -267,6 +262,116 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 	}
 
 	return row, nil
+}
+
+// 関連する補助関数
+
+func getNestedValue(data interface{}, keys []string) (string, error) {
+	for _, key := range keys {
+		switch v := data.(type) {
+		case map[string]interface{}:
+			var ok bool
+			data, ok = v[key]
+			if !ok {
+				return "", fmt.Errorf("キー '%s' が見つかりません", key)
+			}
+		case []interface{}:
+			index := 0
+			_, err := fmt.Sscanf(key, "[%d]", &index)
+			if err != nil {
+				return "", fmt.Errorf("配列インデックスの解析中にエラーが発生しました: %v", err)
+			}
+			if index >= 0 && index < len(v) {
+				data = v[index]
+			} else {
+				return "", fmt.Errorf("インデックス %d が配列の範囲外です", index)
+			}
+		default:
+			return fmt.Sprintf("%v", data), nil
+		}
+	}
+	return fmt.Sprintf("%v", data), nil
+}
+
+func cleanContent(input string) string {
+	if input == "" {
+		return ""
+	}
+
+	// Remove the content prefix and suffix
+	input = strings.TrimPrefix(input, "@{contentType=html; content=")
+	input = strings.TrimSuffix(input, "}")
+
+	// Remove HTML tags
+	doc, err := html.Parse(strings.NewReader(input))
+	if err != nil {
+		log.Printf("HTMLの解析中にエラーが発生しました: %v", err)
+		return input
+	}
+	var textContent string
+	var extractText func(*html.Node)
+	extractText = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			textContent += n.Data
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			extractText(c)
+		}
+	}
+	extractText(doc)
+
+	// 余分な空白を削除（ただし、単語間の空白は保持）
+	textContent = strings.TrimSpace(textContent)
+	space := regexp.MustCompile(`\s{2,}`)
+	textContent = space.ReplaceAllString(textContent, " ")
+
+	// 特殊文字のエスケープを解除
+	textContent = html.UnescapeString(textContent)
+
+	// 残っているかもしれない @{contentType=html; content= を削除
+	contentTypeRegex := regexp.MustCompile(`@\{contentType=html; content=.*?\}`)
+	textContent = contentTypeRegex.ReplaceAllString(textContent, "")
+
+	return textContent
+}
+
+func handleNewlines(input string) string {
+	switch config.NewlineHandling {
+	case "keep":
+		return input
+	case "remove":
+		return strings.ReplaceAll(input, "\r\n", "")
+	case "replace":
+		return strings.ReplaceAll(input, "\r\n", config.NewlineReplacement)
+	default:
+		return input
+	}
+}
+
+func handleNullValue(value string) string {
+	if value == "" {
+		switch config.NullValueHandling {
+		case "null":
+			return "null"
+		case "nil":
+			return "nil"
+		case "empty":
+			return ""
+		default:
+			return ""
+		}
+	}
+	return value
+}
+
+func isEmptyOrAllNull(row []string) bool {
+	nullValue := handleNullValue("")
+	for _, value := range row {
+		if value != "" && value != nullValue {
+			return false
+		}
+	}
+	return true
 }
 
 func extractHTMLValues(content string, keywords []string) (map[string]string, error) {
@@ -281,17 +386,15 @@ func extractHTMLValues(content string, keywords []string) (map[string]string, er
 	var extractFunc func(*html.Node)
 
 	extractFunc = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "strong" {
+		if n.Type == html.ElementNode && (n.Data == "strong" || n.Data == "b") {
 			if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
 				for _, keyword := range keywords {
 					if strings.HasPrefix(n.FirstChild.Data, keyword) {
 						if currentKey != "" {
-							// 前のキーの値を保存
 							results[currentKey] = strings.TrimSpace(buffer.String())
 							buffer.Reset()
 						}
 						currentKey = keyword
-						buffer.WriteString(strings.TrimPrefix(n.FirstChild.Data, keyword))
 						break
 					}
 				}
@@ -306,7 +409,6 @@ func extractHTMLValues(content string, keywords []string) (map[string]string, er
 
 		if n.Type == html.ElementNode && n.Data == "p" {
 			if currentKey != "" {
-				// 段落の終わりで値を保存
 				results[currentKey] = strings.TrimSpace(buffer.String())
 				buffer.Reset()
 				currentKey = ""
@@ -316,22 +418,21 @@ func extractHTMLValues(content string, keywords []string) (map[string]string, er
 
 	extractFunc(doc)
 
-	// 最後のキーの値を保存（もし存在すれば）
 	if currentKey != "" {
 		results[currentKey] = strings.TrimSpace(buffer.String())
 	}
 
 	// 結果をクリーンアップ
 	for k, v := range results {
-		// &nbsp; を通常の空白に置換
-		v = strings.ReplaceAll(v, "\u00A0", " ")
-		// 連続する空白を1つの空白に置換
-		v = regexp.MustCompile(`\s+`).ReplaceAllString(v, " ")
-		// 先頭と末尾の空白を削除
-		v = strings.TrimSpace(v)
+		v = strings.ReplaceAll(v, "\u00A0", " ")               // &nbsp; を通常の空白に置換
+		v = regexp.MustCompile(`\s+`).ReplaceAllString(v, " ") // 連続する空白を1つに
+		v = strings.TrimSpace(v)                               // 先頭と末尾の空白を削除
+		v = strings.TrimPrefix(v, k)                           // キーワードを削除
+		v = strings.TrimSpace(v)                               // 再度、先頭と末尾の空白を削除
 		results[k] = v
 	}
 
+	log.Printf("Debug: Extracted HTML Values: %v", results) // デバッグログ
 	return results, nil
 }
 
