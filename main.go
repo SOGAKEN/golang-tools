@@ -210,16 +210,19 @@ func processJSONFile(filePath string, profile Profile) ([][]string, error) {
 
 	return rows, nil
 }
-
 func processJSONItem(item map[string]interface{}, profile Profile) ([]string, error) {
 	row := make([]string, len(profile.Columns))
 	parseContent := ""
 	if profile.ParseBody != "" {
-		var err error
-		parseContent, err = getNestedValue(item, strings.Split(profile.ParseBody, "."))
-		if err != nil {
-			return nil, fmt.Errorf("ネストされた値の取得中にエラーが発生しました: %v", err)
+		body, ok := item["body"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("bodyフィールドが見つからないか、予期しない形式です")
 		}
+		content, ok := body["content"].(string)
+		if !ok {
+			return nil, fmt.Errorf("contentフィールドが見つからないか、文字列ではありません")
+		}
+		parseContent = content
 		log.Printf("Debug: ParseContent: %s", parseContent) // デバッグログ
 	}
 
@@ -414,4 +417,3 @@ func monitorErrors() {
 		log.Printf("エラー: %v", err)
 	}
 }
-
