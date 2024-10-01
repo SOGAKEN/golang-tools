@@ -290,6 +290,7 @@ func extractHTMLValues(content string, keywords []string) (map[string]string, er
 							buffer.Reset()
 						}
 						currentKey = keyword
+						buffer.WriteString(strings.TrimPrefix(n.FirstChild.Data, keyword))
 						break
 					}
 				}
@@ -317,6 +318,17 @@ func extractHTMLValues(content string, keywords []string) (map[string]string, er
 	// 最後のキーの値を保存（もし存在すれば）
 	if currentKey != "" {
 		results[currentKey] = strings.TrimSpace(buffer.String())
+	}
+
+	// 結果をクリーンアップ
+	for k, v := range results {
+		// &nbsp; を通常の空白に置換
+		v = strings.ReplaceAll(v, "\u00A0", " ")
+		// 連続する空白を1つの空白に置換
+		v = regexp.MustCompile(`\s+`).ReplaceAllString(v, " ")
+		// 先頭と末尾の空白を削除
+		v = strings.TrimSpace(v)
+		results[k] = v
 	}
 
 	return results, nil
