@@ -218,8 +218,10 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ネストされた値の取得中にエラーが発生しました: %v", err)
 		}
+		log.Printf("Debug: ParseContent: %s", parseContent) // デバッグログ追加
 		if profile.ContentType == "html" {
 			parseContent = cleanContent(parseContent)
+			log.Printf("Debug: Cleaned ParseContent: %s", parseContent) // デバッグログ追加
 		}
 	}
 
@@ -236,6 +238,7 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HTML値の抽出中にエラーが発生しました: %v", err)
 	}
+	log.Printf("Debug: Extracted HTML Values: %v", htmlValues) // デバッグログ追加
 
 	for i, column := range profile.Columns {
 		var value string
@@ -252,10 +255,8 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 			if err != nil {
 				return nil, fmt.Errorf("ネストされた値の取得中にエラーが発生しました: %v", err)
 			}
-			if profile.ContentType == "html" {
-				value = cleanContent(value)
-			}
 		}
+		log.Printf("Debug: Column %s, Value: %s", column.Column, value) // デバッグログ追加
 		row[i] = handleNewlines(value)
 		row[i] = handleNullValue(row[i])
 	}
