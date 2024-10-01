@@ -208,6 +208,7 @@ func processJSONFile(filePath string, profile Profile) ([][]string, error) {
 
 	return rows, nil
 }
+
 func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 	row := make([]string, len(profile.Columns))
 	parseContent := ""
@@ -262,116 +263,6 @@ func processJSONItem(item interface{}, profile Profile) ([]string, error) {
 	}
 
 	return row, nil
-}
-
-// 関連する補助関数
-
-func getNestedValue(data interface{}, keys []string) (string, error) {
-	for _, key := range keys {
-		switch v := data.(type) {
-		case map[string]interface{}:
-			var ok bool
-			data, ok = v[key]
-			if !ok {
-				return "", fmt.Errorf("キー '%s' が見つかりません", key)
-			}
-		case []interface{}:
-			index := 0
-			_, err := fmt.Sscanf(key, "[%d]", &index)
-			if err != nil {
-				return "", fmt.Errorf("配列インデックスの解析中にエラーが発生しました: %v", err)
-			}
-			if index >= 0 && index < len(v) {
-				data = v[index]
-			} else {
-				return "", fmt.Errorf("インデックス %d が配列の範囲外です", index)
-			}
-		default:
-			return fmt.Sprintf("%v", data), nil
-		}
-	}
-	return fmt.Sprintf("%v", data), nil
-}
-
-func cleanContent(input string) string {
-	if input == "" {
-		return ""
-	}
-
-	// Remove the content prefix and suffix
-	input = strings.TrimPrefix(input, "@{contentType=html; content=")
-	input = strings.TrimSuffix(input, "}")
-
-	// Remove HTML tags
-	doc, err := html.Parse(strings.NewReader(input))
-	if err != nil {
-		log.Printf("HTMLの解析中にエラーが発生しました: %v", err)
-		return input
-	}
-	var textContent string
-	var extractText func(*html.Node)
-	extractText = func(n *html.Node) {
-		if n.Type == html.TextNode {
-			textContent += n.Data
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			extractText(c)
-		}
-	}
-	extractText(doc)
-
-	// 余分な空白を削除（ただし、単語間の空白は保持）
-	textContent = strings.TrimSpace(textContent)
-	space := regexp.MustCompile(`\s{2,}`)
-	textContent = space.ReplaceAllString(textContent, " ")
-
-	// 特殊文字のエスケープを解除
-	textContent = html.UnescapeString(textContent)
-
-	// 残っているかもしれない @{contentType=html; content= を削除
-	contentTypeRegex := regexp.MustCompile(`@\{contentType=html; content=.*?\}`)
-	textContent = contentTypeRegex.ReplaceAllString(textContent, "")
-
-	return textContent
-}
-
-func handleNewlines(input string) string {
-	switch config.NewlineHandling {
-	case "keep":
-		return input
-	case "remove":
-		return strings.ReplaceAll(input, "\r\n", "")
-	case "replace":
-		return strings.ReplaceAll(input, "\r\n", config.NewlineReplacement)
-	default:
-		return input
-	}
-}
-
-func handleNullValue(value string) string {
-	if value == "" {
-		switch config.NullValueHandling {
-		case "null":
-			return "null"
-		case "nil":
-			return "nil"
-		case "empty":
-			return ""
-		default:
-			return ""
-		}
-	}
-	return value
-}
-
-func isEmptyOrAllNull(row []string) bool {
-	nullValue := handleNullValue("")
-	for _, value := range row {
-		if value != "" && value != nullValue {
-			return false
-		}
-	}
-	return true
 }
 
 func extractHTMLValues(content string, keywords []string) (map[string]string, error) {
@@ -436,38 +327,6 @@ func extractHTMLValues(content string, keywords []string) (map[string]string, er
 	return results, nil
 }
 
-func extractValue(content, key string, extractToEnd bool) (string, error) {
-	lines := strings.Split(content, "\r\n")
-	pattern := regexp.QuoteMeta(key) + `(.+)`
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return "", fmt.Errorf("正規表現のコンパイル中にエラーが発生しました: %v", err)
-	}
-
-	for i, line := range lines {
-		matches := re.FindStringSubmatch(line)
-		if len(matches) > 1 {
-			if extractToEnd {
-				// キーワードが見つかった行から、キーワード以降の部分を抽出
-				keywordIndex := strings.Index(line, key)
-				if keywordIndex != -1 {
-					restOfLine := line[keywordIndex+len(key):]
-					extractedLines := append([]string{restOfLine}, lines[i+1:]...)
-					return strings.TrimSpace(strings.Join(extractedLines, "\r\n")), nil
-				}
-			} else {
-				value := strings.TrimSpace(matches[1])
-				// 次の行にキーワードがあるかチェック
-				if i+1 < len(lines) && strings.Contains(lines[i+1], ":") {
-					return "", nil // null_value_handling に基づいた値を設定
-				}
-				return value, nil
-			}
-		}
-	}
-	return "", nil
-}
-
 func getNestedValue(data interface{}, keys []string) (string, error) {
 	for _, key := range keys {
 		switch v := data.(type) {
@@ -524,7 +383,6 @@ func decodeFileContent(filePath string) ([]byte, error) {
 
 	return decodedContent, nil
 }
-
 func cleanContent(input string) string {
 	if input == "" {
 		return ""
