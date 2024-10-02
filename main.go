@@ -43,6 +43,7 @@ type Column struct {
 	Column       string   `yaml:"column"`
 	Regex        string   `yaml:"regex,omitempty"`
 	Keywords     []string `yaml:"keywords,omitempty"`
+	ExactMatch   bool     `yaml:"exact_match,omitempty"`
 	ExtractToEnd bool     `yaml:"extract_to_end,omitempty"`
 	Format       string   `yaml:"format,omitempty"`
 	CleanHTML    bool     `yaml:"clean_html,omitempty"`
@@ -342,8 +343,13 @@ func extractHTMLValues(content string, columns []Column) (map[string]string, err
 }
 
 func matchColumn(key string, column Column) bool {
+	if column.ExactMatch {
+		// 完全一致
+		return key == column.Regex || containsExact(column.Keywords, key)
+	}
+
 	if column.Regex != "" {
-		match, _ := regexp.MatchString(column.Regex, key)
+		match, _ := regexp.MatchString("^"+column.Regex+"$", key)
 		if match {
 			return true
 		}
@@ -355,6 +361,15 @@ func matchColumn(key string, column Column) bool {
 		}
 	}
 
+	return false
+}
+
+func containsExact(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
 	return false
 }
 

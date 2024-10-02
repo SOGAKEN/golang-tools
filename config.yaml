@@ -16,6 +16,7 @@ profiles:
       - key: ""
         column: "住所"
         regex: "Address"
+        exact_match: true
       - key: ""
         column: "製品名"
         regex: "Product Name"
@@ -25,6 +26,7 @@ profiles:
       - key: ""
         column: "IPアドレス"
         regex: "IP Address"
+        exact_match: true
       - key: "lastModifiedDateTime"
         column: "最終更新日時"
     output_file: "incident_report.csv"
