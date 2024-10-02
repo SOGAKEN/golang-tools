@@ -39,12 +39,13 @@ type Profile struct {
 }
 
 type Column struct {
-	Key          string `yaml:"key"`
-	Column       string `yaml:"column"`
-	Regex        string `yaml:"regex,omitempty"`
-	ExtractToEnd bool   `yaml:"extract_to_end,omitempty"`
-	Format       string `yaml:"format,omitempty"`
-	CleanHTML    bool   `yaml:"clean_html,omitempty"` // 新しいフィールド
+	Key          string   `yaml:"key"`
+	Column       string   `yaml:"column"`
+	Regex        string   `yaml:"regex,omitempty"`
+	Keywords     []string `yaml:"keywords,omitempty"`
+	ExtractToEnd bool     `yaml:"extract_to_end,omitempty"`
+	Format       string   `yaml:"format,omitempty"`
+	CleanHTML    bool     `yaml:"clean_html,omitempty"`
 }
 
 var (
@@ -259,7 +260,7 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 
 	for i, column := range profile.Columns {
 		var value string
-		if column.Regex != "" {
+		if column.Regex != "" || len(column.Keywords) > 0 {
 			// HTML内の値を取得
 			value = htmlValues[column.Column]
 		} else if column.Key != "" {
@@ -295,6 +296,7 @@ func extractHTMLValues(content string, columns []Column) (map[string]string, err
 	}
 
 	results := make(map[string]string)
+	keyValuePairs := make(map[string]string)
 
 	doc.Find("p").Each(func(i int, s *goquery.Selection) {
 		var currentKey string
@@ -303,13 +305,7 @@ func extractHTMLValues(content string, columns []Column) (map[string]string, err
 		s.Contents().Each(func(j int, node *goquery.Selection) {
 			if goquery.NodeName(node) == "strong" {
 				if currentKey != "" {
-					value := strings.TrimSpace(currentValue.String())
-					for _, column := range columns {
-						if column.Regex != "" && strings.Contains(currentKey, column.Regex) {
-							results[column.Column] = value
-							break
-						}
-					}
+					keyValuePairs[currentKey] = strings.TrimSpace(currentValue.String())
 					currentValue.Reset()
 				}
 				currentKey = strings.TrimSuffix(strings.TrimSpace(node.Text()), ":")
@@ -318,20 +314,39 @@ func extractHTMLValues(content string, columns []Column) (map[string]string, err
 			}
 		})
 
-		// 最後のキーと値のペアを保存
 		if currentKey != "" {
-			value := strings.TrimSpace(currentValue.String())
-			for _, column := range columns {
-				if column.Regex != "" && strings.Contains(currentKey, column.Regex) {
-					results[column.Column] = value
-					break
-				}
-			}
+			keyValuePairs[currentKey] = strings.TrimSpace(currentValue.String())
 		}
 	})
 
-	log.Printf("Debug: Extracted HTML Values: %v", results) // デバッグログ
+	for _, column := range columns {
+		for key, value := range keyValuePairs {
+			if matchColumn(key, column) {
+				results[column.Column] = value
+				break
+			}
+		}
+	}
+
+	log.Printf("Debug: Extracted HTML Values: %v", results)
 	return results, nil
+}
+
+func matchColumn(key string, column Column) bool {
+	if column.Regex != "" {
+		match, _ := regexp.MatchString(column.Regex, key)
+		if match {
+			return true
+		}
+	}
+
+	for _, keyword := range column.Keywords {
+		if strings.Contains(strings.ToLower(key), strings.ToLower(keyword)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func cleanValue(value string) string {
