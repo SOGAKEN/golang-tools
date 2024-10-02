@@ -362,11 +362,17 @@ func extractValue(content, key string, extractToEnd bool) (string, error) {
 				}
 			} else {
 				value := strings.TrimSpace(matches[1])
+				// extract_to_end が false の場合のみ <br> を考慮
+				brIndex := strings.Index(value, "<br")
+				if brIndex != -1 {
+					value = value[:brIndex]
+				}
+
 				// 次の行にキーワードがあるかチェック
 				if i+1 < len(lines) && strings.Contains(lines[i+1], ":") {
-					return value, nil
+					return strings.TrimSpace(value), nil
 				}
-				return value, nil
+				return strings.TrimSpace(value), nil
 			}
 		}
 	}
