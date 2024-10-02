@@ -188,6 +188,15 @@ func cleanHTMLContent(content string) string {
 
 	// 連続する空白を1つにまとめる
 	result := regexp.MustCompile(`\s+`).ReplaceAllString(buf.String(), " ")
+
+	// コロンの後に空白がない場合、空白を追加
+	result = regexp.MustCompile(`:\S`).ReplaceAllStringFunc(result, func(s string) string {
+		return s[:1] + " " + s[1:]
+	})
+
+	// "??"を": "に置換
+	result = strings.ReplaceAll(result, "??", ": ")
+
 	return strings.TrimSpace(result)
 }
 
