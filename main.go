@@ -252,27 +252,32 @@ func processJSONFile(filePath string, profile Profile) ([][]string, error) {
 
 func processJSONItem(item map[string]interface{}, profile Profile) ([]string, error) {
 	row := make([]string, len(profile.Columns))
+	var parseContent string
+	var htmlValues map[string]string
 
-	// HTMLコンテンツを含む可能性のあるフィールドを抽出
-	var htmlContent string
 	if profile.ParseBody != "" {
 		content, err := getNestedValue(item, strings.Split(profile.ParseBody, "."))
 		if err != nil {
 			return nil, fmt.Errorf("HTMLコンテンツの取得中にエラーが発生しました: %v", err)
 		}
-		htmlContent = content
-	}
+		parseContent = content
 
-	htmlValues, err := extractHTMLValues(htmlContent, profile.Columns)
-	if err != nil {
-		return nil, fmt.Errorf("HTML値の抽出中にエラーが発生しました: %v", err)
+		if profile.ContentType == "html" {
+			htmlValues, err = extractHTMLValues(parseContent, profile.Columns)
+			if err != nil {
+				return nil, fmt.Errorf("HTML値の抽出中にエラーが発生しました: %v", err)
+			}
+		}
 	}
 
 	for i, column := range profile.Columns {
 		var value string
-		if column.Regex != "" || len(column.Keywords) > 0 {
+		if profile.ContentType == "html" && (column.Regex != "" || len(column.Keywords) > 0) {
 			// HTML内の値を取得
 			value = htmlValues[column.Column]
+		} else if column.Regex != "" && profile.ParseBody != "" {
+			// 既存の正規表現による抽出
+			value = extractValue(parseContent, column.Regex)
 		} else if column.Key != "" {
 			// JSONのトップレベルの値を取得
 			var err error
@@ -282,7 +287,6 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 			}
 		}
 
-		// HTMLのクリーニングが必要な場合
 		if column.CleanHTML {
 			value = cleanHTMLContent(value)
 		}
@@ -296,9 +300,53 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 		log.Printf("Debug: Column %s, Value: %s", column.Column, row[i])
 	}
 
+	if isEmptyOrAllNull(row) {
+		return nil, nil
+	}
+
 	return row, nil
 }
+func isEmptyOrAllNull(row []string) bool {
+	for _, value := range row {
+		if value != "" && value != handleNullValue("") {
+			return false
+		}
+	}
+	return true
+}
 
+func cleanContent(input string) string {
+	if input == "" {
+		return ""
+	}
+
+	// Remove the content prefix and suffix
+	input = strings.TrimPrefix(input, "@{contentType=html; content=")
+	input = strings.TrimSuffix(input, "}")
+
+	// 余分な空白を削除（ただし、単語間の空白は保持）
+	input = strings.TrimSpace(input)
+	space := regexp.MustCompile(`\s{2,}`)
+	input = space.ReplaceAllString(input, " ")
+
+	// 特殊文字のエスケープを解除
+	input = html.UnescapeString(input)
+
+	// 残っているかもしれない @{contentType=html; content= を削除
+	contentTypeRegex := regexp.MustCompile(`@\{contentType=html; content=.*?\}`)
+	input = contentTypeRegex.ReplaceAllString(input, "")
+
+	return input
+}
+func extractValue(content, key string) string {
+	pattern := fmt.Sprintf(`%s\s*([^：\s][^：\n]*)`, regexp.QuoteMeta(key))
+	re := regexp.MustCompile(pattern)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) > 1 {
+		return strings.TrimSpace(matches[1])
+	}
+	return ""
+}
 func extractHTMLValues(content string, columns []Column) (map[string]string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
