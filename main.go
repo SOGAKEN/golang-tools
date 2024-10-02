@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 	"gopkg.in/yaml.v2"
@@ -43,6 +44,7 @@ type Column struct {
 	Regex        string `yaml:"regex,omitempty"`
 	ExtractToEnd bool   `yaml:"extract_to_end,omitempty"`
 	Format       string `yaml:"format,omitempty"`
+	CleanHTML    bool   `yaml:"clean_html,omitempty"` // 新しいフィールド
 }
 
 var (
@@ -162,6 +164,32 @@ func main() {
 	fmt.Println("\n処理が完了しました。出力ファイル: ", outputFile.Name())
 }
 
+func cleanHTMLContent(content string) string {
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		// エラーが発生した場合は元のコンテンツを返す
+		return content
+	}
+
+	var buf strings.Builder
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			buf.WriteString(n.Data)
+		} else if n.Type == html.ElementNode && n.Data == "br" {
+			buf.WriteString("<br>")
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+
+	// 連続する空白を1つにまとめる
+	result := regexp.MustCompile(`\s+`).ReplaceAllString(buf.String(), " ")
+	return strings.TrimSpace(result)
+}
+
 func getHeaders(profile Profile) []string {
 	headers := make([]string, len(profile.Columns))
 	for i, column := range profile.Columns {
@@ -213,21 +241,18 @@ func processJSONFile(filePath string, profile Profile) ([][]string, error) {
 
 func processJSONItem(item map[string]interface{}, profile Profile) ([]string, error) {
 	row := make([]string, len(profile.Columns))
-	parseContent := ""
+
+	// HTMLコンテンツを含む可能性のあるフィールドを抽出
+	var htmlContent string
 	if profile.ParseBody != "" {
-		body, ok := item["body"].(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("bodyフィールドが見つからないか、予期しない形式です")
+		content, err := getNestedValue(item, strings.Split(profile.ParseBody, "."))
+		if err != nil {
+			return nil, fmt.Errorf("HTMLコンテンツの取得中にエラーが発生しました: %v", err)
 		}
-		content, ok := body["content"].(string)
-		if !ok {
-			return nil, fmt.Errorf("contentフィールドが見つからないか、文字列ではありません")
-		}
-		parseContent = content
-		log.Printf("Debug: ParseContent: %s", parseContent) // デバッグログ
+		htmlContent = content
 	}
 
-	htmlValues, err := extractHTMLValues(parseContent, profile.Columns)
+	htmlValues, err := extractHTMLValues(htmlContent, profile.Columns)
 	if err != nil {
 		return nil, fmt.Errorf("HTML値の抽出中にエラーが発生しました: %v", err)
 	}
@@ -245,6 +270,12 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 				log.Printf("Warning: ネストされた値の取得中にエラーが発生しました: %v", err)
 			}
 		}
+
+		// HTMLのクリーニングが必要な場合
+		if column.CleanHTML {
+			value = cleanHTMLContent(value)
+		}
+
 		row[i] = handleNewlines(value)
 		row[i] = handleNullValue(row[i])
 	}
