@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/net/html"
+	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 	"gopkg.in/yaml.v2"
@@ -210,6 +210,7 @@ func processJSONFile(filePath string, profile Profile) ([][]string, error) {
 
 	return rows, nil
 }
+
 func processJSONItem(item map[string]interface{}, profile Profile) ([]string, error) {
 	row := make([]string, len(profile.Columns))
 	parseContent := ""
@@ -226,7 +227,7 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 		log.Printf("Debug: ParseContent: %s", parseContent) // デバッグログ
 	}
 
-	htmlValues, err := extractHTMLValues(parseContent, nil)
+	htmlValues, err := extractHTMLValues(parseContent, profile.Columns)
 	if err != nil {
 		return nil, fmt.Errorf("HTML値の抽出中にエラーが発生しました: %v", err)
 	}
@@ -235,7 +236,7 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 		var value string
 		if column.Regex != "" {
 			// HTML内の値を取得
-			value = htmlValues[column.Regex]
+			value = htmlValues[column.Column]
 		} else if column.Key != "" {
 			// JSONのトップレベルの値を取得
 			var err error
@@ -244,62 +245,68 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 				log.Printf("Warning: ネストされた値の取得中にエラーが発生しました: %v", err)
 			}
 		}
-		log.Printf("Debug: Column %s, Value: %s", column.Column, value) // デバッグログ
 		row[i] = handleNewlines(value)
 		row[i] = handleNullValue(row[i])
+	}
+
+	// デバッグログを1回だけ出力
+	for i, column := range profile.Columns {
+		log.Printf("Debug: Column %s, Value: %s", column.Column, row[i])
 	}
 
 	return row, nil
 }
 
-func extractHTMLValues(content string, keywords []string) (map[string]string, error) {
-	doc, err := html.Parse(strings.NewReader(content))
+func extractHTMLValues(content string, columns []Column) (map[string]string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
 		return nil, fmt.Errorf("HTMLの解析中にエラーが発生しました: %v", err)
 	}
 
 	results := make(map[string]string)
-	var f func(*html.Node)
-	var currentKey string
-	var buffer strings.Builder
 
-	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "strong" {
-			if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
-				currentKey = strings.TrimSuffix(strings.TrimSpace(n.FirstChild.Data), ":")
+	doc.Find("p").Each(func(i int, s *goquery.Selection) {
+		var currentKey string
+		var currentValue strings.Builder
+
+		s.Contents().Each(func(j int, node *goquery.Selection) {
+			if goquery.NodeName(node) == "strong" {
+				if currentKey != "" {
+					value := strings.TrimSpace(currentValue.String())
+					for _, column := range columns {
+						if column.Regex != "" && strings.Contains(currentKey, column.Regex) {
+							results[column.Column] = value
+							break
+						}
+					}
+					currentValue.Reset()
+				}
+				currentKey = strings.TrimSuffix(strings.TrimSpace(node.Text()), ":")
+			} else {
+				currentValue.WriteString(node.Text())
 			}
-		} else if currentKey != "" && n.Type == html.TextNode {
-			buffer.WriteString(n.Data)
+		})
+
+		// 最後のキーと値のペアを保存
+		if currentKey != "" {
+			value := strings.TrimSpace(currentValue.String())
+			for _, column := range columns {
+				if column.Regex != "" && strings.Contains(currentKey, column.Regex) {
+					results[column.Column] = value
+					break
+				}
+			}
 		}
-
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
-
-		if n.Type == html.ElementNode && n.Data == "br" && currentKey != "" {
-			results[currentKey] = strings.TrimSpace(buffer.String())
-			currentKey = ""
-			buffer.Reset()
-		}
-	}
-
-	f(doc)
-
-	// 最後のキーの処理
-	if currentKey != "" {
-		results[currentKey] = strings.TrimSpace(buffer.String())
-	}
-
-	// 結果をクリーンアップ
-	for k, v := range results {
-		v = strings.ReplaceAll(v, "\u00A0", " ")               // &nbsp; を通常の空白に置換
-		v = regexp.MustCompile(`\s+`).ReplaceAllString(v, " ") // 連続する空白を1つに
-		v = strings.TrimSpace(v)                               // 先頭と末尾の空白を削除
-		results[k] = v
-	}
+	})
 
 	log.Printf("Debug: Extracted HTML Values: %v", results) // デバッグログ
 	return results, nil
+}
+
+func cleanValue(value string) string {
+	value = strings.ReplaceAll(value, "\u00A0", " ")               // &nbsp; を通常の空白に置換
+	value = regexp.MustCompile(`\s+`).ReplaceAllString(value, " ") // 連続する空白を1つに
+	return strings.TrimSpace(value)                                // 先頭と末尾の空白を削除
 }
 
 func getNestedValue(data interface{}, keys []string) (string, error) {
