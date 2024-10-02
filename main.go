@@ -272,15 +272,18 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 
 	for i, column := range profile.Columns {
 		var value string
+		var err error
 		if profile.ContentType == "html" && (column.Regex != "" || len(column.Keywords) > 0) {
 			// HTML内の値を取得
 			value = htmlValues[column.Column]
 		} else if column.Regex != "" && profile.ParseBody != "" {
 			// 既存の正規表現による抽出
-			value = extractValue(parseContent, column.Regex)
+			value, err = extractValue(parseContent, column.Regex, column.ExtractToEnd)
+			if err != nil {
+				return nil, fmt.Errorf("値の抽出中にエラーが発生しました: %v", err)
+			}
 		} else if column.Key != "" {
 			// JSONのトップレベルの値を取得
-			var err error
 			value, err = getNestedValue(item, strings.Split(column.Key, "."))
 			if err != nil {
 				log.Printf("Warning: ネストされた値の取得中にエラーが発生しました: %v", err)
@@ -338,14 +341,36 @@ func cleanContent(input string) string {
 
 	return input
 }
-func extractValue(content, key string) string {
-	pattern := fmt.Sprintf(`%s\s*([^：\s][^：\n]*)`, regexp.QuoteMeta(key))
-	re := regexp.MustCompile(pattern)
-	matches := re.FindStringSubmatch(content)
-	if len(matches) > 1 {
-		return strings.TrimSpace(matches[1])
+func extractValue(content, key string, extractToEnd bool) (string, error) {
+	lines := strings.Split(content, "\r\n")
+	pattern := regexp.QuoteMeta(key) + `(.+)`
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("正規表現のコンパイル中にエラーが発生しました: %v", err)
 	}
-	return ""
+
+	for i, line := range lines {
+		matches := re.FindStringSubmatch(line)
+		if len(matches) > 1 {
+			if extractToEnd {
+				// キーワードが見つかった行から、キーワード以降の部分を抽出
+				keywordIndex := strings.Index(line, key)
+				if keywordIndex != -1 {
+					restOfLine := line[keywordIndex+len(key):]
+					extractedLines := append([]string{restOfLine}, lines[i+1:]...)
+					return strings.TrimSpace(strings.Join(extractedLines, "\r\n")), nil
+				}
+			} else {
+				value := strings.TrimSpace(matches[1])
+				// 次の行にキーワードがあるかチェック
+				if i+1 < len(lines) && strings.Contains(lines[i+1], ":") {
+					return value, nil
+				}
+				return value, nil
+			}
+		}
+	}
+	return "", nil
 }
 func extractHTMLValues(content string, columns []Column) (map[string]string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
