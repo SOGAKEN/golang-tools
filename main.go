@@ -47,6 +47,7 @@ type Column struct {
 	ExtractToEnd bool     `yaml:"extract_to_end,omitempty"`
 	Format       string   `yaml:"format,omitempty"`
 	CleanHTML    bool     `yaml:"clean_html,omitempty"`
+	Tag          string   `yaml:"tag,omitempty"`
 }
 
 var (
@@ -167,6 +168,11 @@ func main() {
 }
 
 func cleanHTMLContent(content string) string {
+	if profileName == "teams" || profileName == "replies" {
+		atPattern := `<at id="\d+">[^<]+</at>`
+		re := regexp.MustCompile(atPattern)
+		content = re.ReplaceAllString(content, "")
+	}
 	doc, err := html.Parse(strings.NewReader(content))
 	if err != nil {
 		// エラーが発生した場合は元のコンテンツを返す
@@ -197,6 +203,10 @@ func cleanHTMLContent(content string) string {
 
 	// "??"を": "に置換
 	result = strings.ReplaceAll(result, "??", ": ")
+
+	if profileName == "teams" || profileName == "replies" {
+		result = cleanContent(result)
+	}
 
 	return strings.TrimSpace(result)
 }
@@ -296,6 +306,7 @@ func processJSONItem(item map[string]interface{}, profile Profile) ([]string, er
 
 		row[i] = handleNewlines(value)
 		row[i] = handleNullValue(row[i])
+
 	}
 
 	// デバッグログを1回だけ出力
@@ -409,16 +420,31 @@ func extractHTMLValues(content string, columns []Column) (map[string]string, err
 	})
 
 	for _, column := range columns {
-		for key, value := range keyValuePairs {
-			if matchColumn(key, column) {
-				results[column.Column] = value
-				break
+		if column.Tag != "" {
+			tagContent := extractTagContent(doc, column.Tag)
+			results[column.Column] = tagContent
+
+		} else {
+			for key, value := range keyValuePairs {
+				if matchColumn(key, column) {
+					results[column.Column] = value
+					break
+				}
 			}
+
 		}
 	}
 
 	log.Printf("Debug: Extracted HTML Values: %v", results)
 	return results, nil
+}
+
+func extractTagContent(doc *goquery.Document, tagName string) string {
+	var content string
+	doc.Find(tagName).Each(func(i int, s *goquery.Selection) {
+		content += s.Text() + " "
+	})
+	return strings.TrimSpace(content)
 }
 
 func matchColumn(key string, column Column) bool {
@@ -529,7 +555,8 @@ func handleNewlines(input string) string {
 }
 
 func handleNullValue(value string) string {
-	if value == "" {
+
+	if value == "" || value == "<nil>" {
 		switch config.NullValueHandling {
 		case "null":
 			return "null"
